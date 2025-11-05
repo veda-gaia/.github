@@ -109,7 +109,7 @@ jobs:
             exit 0
           fi
           CURRENT_BODY=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" --jq '.body // ""')
-          LINK_LINE="Refs #$ISSUE_NUMBER"
+          LINK_LINE="Closes #$ISSUE_NUMBER"
 
           if [[ "$CURRENT_BODY" == *"#${ISSUE_NUMBER}"* ]]; then
             echo "Pull request body already references issue #$ISSUE_NUMBER."
@@ -126,7 +126,7 @@ jobs:
             --method PATCH \
             -f body="$UPDATED_BODY"
 
-          echo "Added 'Refs #$ISSUE_NUMBER' to pull request #$PR_NUMBER."
+          echo "Added 'Closes #$ISSUE_NUMBER' to pull request #$PR_NUMBER."
 
   # ---- Label issues when PR merges into develop ----
   label-merged-to-develop:
