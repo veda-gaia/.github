@@ -1,0 +1,10 @@
+﻿{
+    "iconName":  "octicon-project",
+    "description":  "Atualiza o status do projeto da organizacao a partir de pushes, pull requests e labels.",
+    "name":  "Project status from events",
+    "categories":  [
+                       "Automation",
+                       "Projects"
+                   ]
+}
+

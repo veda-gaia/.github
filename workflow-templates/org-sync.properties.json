@@ -1,0 +1,9 @@
+﻿{
+    "iconName":  "octicon-organization",
+    "description":  "Sincroniza labels e milestones com os padroes da organizacao.",
+    "name":  "Sync org labels \u0026 milestones",
+    "categories":  [
+                       "Automation"
+                   ]
+}
+

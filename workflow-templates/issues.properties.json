@@ -1,0 +1,10 @@
+﻿{
+    "iconName":  "octicon-issue-opened",
+    "description":  "Aplica o template de issue, define o tipo e adiciona ao projeto padrao da organizacao.",
+    "name":  "Issues Automation",
+    "categories":  [
+                       "Automation",
+                       "Issues"
+                   ]
+}
+
