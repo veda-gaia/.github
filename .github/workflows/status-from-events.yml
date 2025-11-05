@@ -84,16 +84,105 @@ jobs:
     secrets:
       GH_PROJECT_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
 
-  # ---- QA/Staging (PR merged into develop) ----
-  set-qa-staging:
+  link-pr-to-issue:
+    needs:
+      - detect-issue-number
+      - set-code-review
+    if: github.event_name == 'pull_request' && github.event.action == 'opened' && needs.detect-issue-number.outputs.issue != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure PR references issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          ISSUE_NUMBER: ${{ needs.detect-issue-number.outputs.issue }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ISSUE_NUMBER" ]]; then
+            echo "No issue number detected, skipping link."
+            exit 0
+          fi
+
+          CURRENT_BODY=$(gh api repos/$OWNER/$REPO/pulls/$PR_NUMBER --jq '.body // ""')
+          LINK_LINE="Refs #$ISSUE_NUMBER"
+
+          if [[ "$CURRENT_BODY" != *"#${ISSUE_NUMBER}"* ]]; then
+            if [[ -z "$CURRENT_BODY" ]]; then
+              UPDATED_BODY="$LINK_LINE"
+            else
+              UPDATED_BODY="$CURRENT_BODY"$'\n\n'"$LINK_LINE"
+            fi
+            gh api repos/$OWNER/$REPO/pulls/$PR_NUMBER \
+              -X PATCH \
+              -f body="$UPDATED_BODY"
+            echo "Added reference to issue #$ISSUE_NUMBER in PR body."
+          else
+            echo "PR body already references issue #$ISSUE_NUMBER."
+          fi
+
+  # ---- Label issues when PR merges into develop ----
+  label-merged-to-develop:
     needs: detect-issue-number
     if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'develop' && needs.detect-issue-number.outputs.issue != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add merged-to-develop label to issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          ISSUE_NUMBER: ${{ needs.detect-issue-number.outputs.issue }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ISSUE_NUMBER" ]]; then
+            echo "No issue number detected, skipping label."
+            exit 0
+          fi
+          gh api repos/$OWNER/$REPO/issues/$ISSUE_NUMBER/labels \
+            -X POST \
+            -f labels='["merged-to-develop"]'
+
+  # ---- QA/Staging (PR merged into homolog) ----
+  collect-ready-for-staging:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'homolog'
+    runs-on: ubuntu-latest
+    outputs:
+      issues: ${{ steps.collect.outputs.issues }}
+    steps:
+      - name: Collect issues labeled merged-to-develop
+        id: collect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "/repos/$OWNER/$REPO/issues?labels=merged-to-develop&state=open" > issues.json
+          ISSUES=$(jq -s -c '
+            [.[]
+             | .[]
+             | select(.pull_request | not)
+             | .number]
+          ' issues.json)
+          if [[ -z "$ISSUES" || "$ISSUES" == "" ]]; then
+            ISSUES="[]"
+          fi
+          echo "issues=$ISSUES" >> "$GITHUB_OUTPUT"
+
+  set-qa-staging:
+    needs: collect-ready-for-staging
+    if: needs.collect-ready-for-staging.outputs.issues != '' && needs.collect-ready-for-staging.outputs.issues != '[]'
+    strategy:
+      matrix:
+        issue: ${{ fromJSON(needs.collect-ready-for-staging.outputs.issues) }}
     uses: veda-gaia/.github/.github/workflows/project-set-status.yml@main
     with:
       organization: veda-gaia
       project_number: 1
       repo: ${{ github.event.repository.name }}
-      issue_number: "${{ needs.detect-issue-number.outputs.issue }}"
+      issue_number: "${{ matrix.issue }}"
       status_name: QA/Staging
     secrets:
       GH_PROJECT_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}

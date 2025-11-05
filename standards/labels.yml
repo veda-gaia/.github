@@ -5,4 +5,9 @@
 - name: uat-approved
   color: "0e8a16"
   description: Homologado pelo cliente (UAT aprovado)
+
+- name: merged-to-develop
+  color: "0052cc"
+  description: Pull request mesclado na branch develop
+  
 ### THIS WORKS
