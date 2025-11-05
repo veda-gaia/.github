@@ -1,0 +1,10 @@
+milestones:
+  - title: Sprint 8
+    description: Correção de bugs e melhorias finais
+    state: open
+    due_on: 2025-11-09T23:59:59Z
+  - title: Sprint 9
+    description: Expo Cannabis
+    state: open
+    due_on: 2025-11-23T23:59:59Z
+### THIS WORKS

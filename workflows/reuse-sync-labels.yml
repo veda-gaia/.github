@@ -1,0 +1,23 @@
+name: Reusable • Sync only org labels
+on:
+  workflow_call: {}
+
+jobs:
+  sync-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout standards from veda-gaia/.github
+        uses: actions/checkout@v4
+        with:
+          repository: veda-gaia/.github
+          ref: main
+
+      - name: Apply only the org labels (no delete)
+        uses: crazy-max/ghaction-github-labeler@v5
+        with:
+          yaml-file: standards/labels.yml
+          skip-delete: true # não remove labels existentes
+          dry-run: false

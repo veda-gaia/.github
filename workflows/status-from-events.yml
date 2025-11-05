@@ -1,0 +1,182 @@
+name: Project - Status from Events
+
+on:
+  workflow_call:
+    inputs:
+      project_url:
+        type: string
+        required: false
+        default: "https://github.com/orgs/veda-gaia/projects/1"
+    secrets:
+      GH_PROJECT_TOKEN:
+        required: true
+  push:
+    # Qualquer branch; o job detecta o número da issue a partir do nome
+  pull_request:
+    types: [opened, closed] # Code Review / QA-Staging / Done
+  issues:
+    types: [labeled] # Ready for Prod (UAT approved)
+
+jobs:
+  detect-issue-number:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      issue: ${{ steps.extract.outputs.issue }}
+    steps:
+      - name: Detect issue number
+        id: extract
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BRANCH_REF: ${{ github.ref_name }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref || '' }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+        run: |
+          set -euo pipefail
+          find_issue() {
+            local value="${1:-}"
+            local match=""
+            if [[ "$value" =~ (^|/)([0-9]+)[-_] ]]; then
+              match="${BASH_REMATCH[2]}"
+            elif [[ "$value" =~ (^|/)([0-9]+)$ ]]; then
+              match="${BASH_REMATCH[2]}"
+            fi
+            echo "$match"
+          }
+          ISSUE=""
+          if [[ "${EVENT_NAME}" == "push" ]]; then
+            ISSUE="$(find_issue "$BRANCH_REF")"
+          elif [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            REF="${PR_HEAD_REF}"
+            TITLE="${PR_TITLE}"
+            ISSUE="$(find_issue "$REF")"
+            if [[ -z "$ISSUE" && "$TITLE" =~ \#([0-9]+) ]]; then
+              ISSUE="${BASH_REMATCH[1]}"
+            fi
+          fi
+          echo "issue=$ISSUE" >> "$GITHUB_OUTPUT"
+
+  # ---- In Progress (branch push) ----
+  set-in-progress:
+    needs: detect-issue-number
+    if: github.event_name == 'push' && needs.detect-issue-number.outputs.issue != ''
+    uses: veda-gaia/.github/.github/workflows/project-set-status.yml@main
+    with:
+      organization: veda-gaia
+      project_number: 1
+      repo: ${{ github.event.repository.name }}
+      issue_number: "${{ needs.detect-issue-number.outputs.issue }}"
+      status_name: In Progress
+    secrets:
+      GH_PROJECT_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
+
+  # ---- Code Review (PR opened) ----
+  set-code-review:
+    needs: detect-issue-number
+    if: github.event_name == 'pull_request' && github.event.action == 'opened' && needs.detect-issue-number.outputs.issue != ''
+    uses: veda-gaia/.github/.github/workflows/project-set-status.yml@main
+    with:
+      organization: veda-gaia
+      project_number: 1
+      repo: ${{ github.event.repository.name }}
+      issue_number: "${{ needs.detect-issue-number.outputs.issue }}"
+      status_name: Code Review
+    secrets:
+      GH_PROJECT_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
+
+  # ---- QA/Staging (PR merged into develop) ----
+  set-qa-staging:
+    needs: detect-issue-number
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'develop' && needs.detect-issue-number.outputs.issue != ''
+    uses: veda-gaia/.github/.github/workflows/project-set-status.yml@main
+    with:
+      organization: veda-gaia
+      project_number: 1
+      repo: ${{ github.event.repository.name }}
+      issue_number: "${{ needs.detect-issue-number.outputs.issue }}"
+      status_name: QA/Staging
+    secrets:
+      GH_PROJECT_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
+
+  # ---- Ready for Prod (Issue labeled uat-approved) ----
+  ready-for-prod-on-issue-label:
+    if: github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'uat-approved'
+    uses: veda-gaia/.github/.github/workflows/project-set-status.yml@main
+    with:
+      organization: veda-gaia
+      project_number: 1
+      repo: ${{ github.event.repository.name }}
+      issue_number: "${{ github.event.issue.number }}"
+      status_name: Ready for Prod
+    secrets:
+      GH_PROJECT_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
+
+  # ---- Done (PR merged into main) ----
+  collect-ready-for-prod:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    outputs:
+      issues: ${{ steps.collect.outputs.issues }}
+    steps:
+      - name: Collect Ready for Prod issues
+        id: collect
+        env:
+          GH_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          gh api graphql --paginate -f query='
+            query($owner:String!, $project:Int!, $endCursor:String) {
+              organization(login: $owner) {
+                projectV2(number: $project) {
+                  items(first: 100, after: $endCursor) {
+                    nodes {
+                      content {
+                        __typename
+                        ... on Issue {
+                          number
+                          repository { name }
+                        }
+                      }
+                      fieldValueByName(name: "Status") {
+                        ... on ProjectV2ItemFieldSingleSelectValue {
+                          name
+                        }
+                      }
+                    }
+                    pageInfo {
+                      hasNextPage
+                      endCursor
+                    }
+                  }
+                }
+              }
+            }
+          ' -f owner="$OWNER" -F project=1 -F endCursor=null > items.json
+          ISSUES=$(jq -s -c --arg repo "$REPO" '
+            [.[].data.organization.projectV2.items.nodes[]?
+             | select(.content.__typename == "Issue" and .content.repository.name == $repo)
+             | {number: .content.number, status: (.fieldValueByName.name // "")}
+             | select(.status == "Ready for Prod")
+             | .number]
+          ' items.json)
+          echo "issues=$ISSUES" >> "$GITHUB_OUTPUT"
+
+  set-done:
+    needs: collect-ready-for-prod
+    if: needs.collect-ready-for-prod.outputs.issues != '' && needs.collect-ready-for-prod.outputs.issues != '[]'
+    strategy:
+      matrix:
+        issue: ${{ fromJSON(needs.collect-ready-for-prod.outputs.issues) }}
+    uses: veda-gaia/.github/.github/workflows/project-set-status.yml@main
+    with:
+      organization: veda-gaia
+      project_number: 1
+      repo: ${{ github.event.repository.name }}
+      issue_number: "${{ matrix.issue }}"
+      status_name: Done
+    secrets:
+      GH_PROJECT_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
+
+      ### THIS WORKS
