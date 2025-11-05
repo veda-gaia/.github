@@ -81,8 +81,12 @@ jobs:
       - set-code-review
     if: github.event_name == 'pull_request' && github.event.action == 'opened' && needs.detect-issue-number.outputs.issue != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
-      - name: Ensure PR references issue
+      - name: Link pull request to issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
@@ -95,23 +99,50 @@ jobs:
             echo "No issue number detected, skipping link."
             exit 0
           fi
+          tmp_ids="$(mktemp)"
+          tmp_err="$(mktemp)"
 
-          CURRENT_BODY=$(gh api repos/$OWNER/$REPO/pulls/$PR_NUMBER --jq '.body // ""')
-          LINK_LINE="Refs #$ISSUE_NUMBER"
+          gh api graphql -f query='
+            query($owner:String!, $repo:String!, $issue:Int!, $pr:Int!) {
+              repository(owner:$owner, name:$repo) {
+                issue(number:$issue) { id }
+                pullRequest(number:$pr) { id }
+              }
+            }
+          ' -f owner="$OWNER" -f repo="$REPO" -F issue="$ISSUE_NUMBER" -F pr="$PR_NUMBER" > "$tmp_ids"
 
-          if [[ "$CURRENT_BODY" != *"#${ISSUE_NUMBER}"* ]]; then
-            if [[ -z "$CURRENT_BODY" ]]; then
-              UPDATED_BODY="$LINK_LINE"
-            else
-              UPDATED_BODY="$CURRENT_BODY"$'\n\n'"$LINK_LINE"
-            fi
-            gh api repos/$OWNER/$REPO/pulls/$PR_NUMBER \
-              -X PATCH \
-              -f body="$UPDATED_BODY"
-            echo "Added reference to issue #$ISSUE_NUMBER in PR body."
-          else
-            echo "PR body already references issue #$ISSUE_NUMBER."
+          ISSUE_ID=$(jq -r '.data.repository.issue.id' "$tmp_ids")
+          PR_ID=$(jq -r '.data.repository.pullRequest.id' "$tmp_ids")
+
+          if [[ "$ISSUE_ID" == "null" || -z "$ISSUE_ID" ]]; then
+            echo "Could not resolve issue ID" >&2
+            rm -f "$tmp_ids" "$tmp_err"
+            exit 1
           fi
+          if [[ "$PR_ID" == "null" || -z "$PR_ID" ]]; then
+            echo "Could not resolve pull request ID" >&2
+            rm -f "$tmp_ids" "$tmp_err"
+            exit 1
+          fi
+
+          if gh api graphql -f query='
+            mutation($issue:ID!, $pr:ID!) {
+              linkPullRequestToIssue(input:{issueId:$issue, pullRequestId:$pr}) {
+                issue { id }
+              }
+            }
+          ' -f issue="$ISSUE_ID" -f pr="$PR_ID" > /dev/null 2>"$tmp_err"; then
+            echo "Linked pull request #$PR_NUMBER to issue #$ISSUE_NUMBER."
+          else
+            if grep -qi "already linked" "$tmp_err"; then
+              echo "Pull request #$PR_NUMBER is already linked to issue #$ISSUE_NUMBER."
+            else
+              cat "$tmp_err" >&2
+              rm -f "$tmp_ids" "$tmp_err"
+              exit 1
+            fi
+          fi
+          rm -f "$tmp_ids" "$tmp_err"
 
   # ---- Label issues when PR merges into develop ----
   label-merged-to-develop:
