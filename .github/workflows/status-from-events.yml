@@ -111,8 +111,8 @@ jobs:
           CURRENT_BODY=$(gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER" --jq '.body // ""')
           LINK_LINE="Closes #$ISSUE_NUMBER"
 
-          if [[ "$CURRENT_BODY" == *"#${ISSUE_NUMBER}"* ]]; then
-            echo "Pull request body already references issue #$ISSUE_NUMBER."
+          if [[ "$CURRENT_BODY" == *"Closes #$ISSUE_NUMBER"* ]]; then
+            echo "Pull request body already closes issue #$ISSUE_NUMBER."
             exit 0
           fi
 
