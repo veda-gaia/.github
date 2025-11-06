@@ -121,6 +121,8 @@ jobs:
 
   # ---- Label issues when PR merges into develop ----
   label-merged-to-develop:
+    permissions:
+      issues: write
     needs: detect-issue-number
     if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'develop' && needs.detect-issue-number.outputs.issue != ''
     runs-on: ubuntu-latest
