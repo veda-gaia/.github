@@ -7,4 +7,8 @@ milestones:
     description: Expo Cannabis
     state: open
     due_on: 2025-11-23T23:59:59Z
+  - title: Sprint 10
+    description: Correção de bugs e ajustes de UX
+    state: open
+    due_on: 2025-12-26T23:59:59Z
 ### THIS WORKS
